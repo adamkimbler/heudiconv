@@ -1,3 +1,4 @@
+import filelock
 import os
 import os.path as op
 import logging
@@ -32,6 +33,7 @@ from .dicoms import (
     compress_dicoms
 )
 
+LOCKFILE = 'heudiconv.lock'
 lgr = logging.getLogger(__name__)
 
 
@@ -210,14 +212,23 @@ def prep_conversion(sid, dicoms, outdir, heuristic, converter, anon_sid,
         clear_temp_dicoms(item_dicoms)
 
     if bids_options is not None and 'notop' not in bids_options:
-        if seqinfo:
-            keys = list(seqinfo)
-            add_participant_record(anon_outdir,
-                                   anon_sid,
-                                   keys[0].patient_age,
-                                   keys[0].patient_sex)
-        populate_bids_templates(anon_outdir,
-                                getattr(heuristic, 'DEFAULT_FIELDS', {}))
+        lockfile = op.join(anon_outdir, LOCKFILE)
+        if op.exists(lockfile):
+            lgr.warning("Existing lockfile found in {0} - waiting for the "
+                        "lock to be released. To set a timeout limit, set "
+                        "the HEUDICONV_FILELOCK_TIMEOUT environmental variable "
+                        "to a value in seconds. If this process hangs, it may "
+                        "require a manual deletion of the {0}.".format(lockfile))
+        timeout = os.getenv("HEUDICONV_LOCKFILE_TIMEOUT", -1)
+        with filelock.SoftFileLock(lockfile, timeout=timeout):
+            if seqinfo:
+                keys = list(seqinfo)
+                add_participant_record(anon_outdir,
+                                       anon_sid,
+                                       keys[0].patient_age,
+                                       keys[0].patient_sex)
+            populate_bids_templates(anon_outdir,
+                                    getattr(heuristic, 'DEFAULT_FIELDS', {}))
 
 
 def convert(items, converter, scaninfo_suffix, custom_callable, with_prov,
@@ -580,7 +591,7 @@ def save_converted_files(res, item_dicoms, bids_options, outtype, prefix, outnam
                 else:
                     echo_number = echo_times.index(fileinfo['EchoTime']) + 1
 
-                supported_multiecho = ['_bold', '_epi', '_sbref', '_T1w', '_PDT2']
+                supported_multiecho = ['_bold', '_phase', '_epi', '_sbref', '_T1w', '_PDT2']
                 # Now, decide where to insert it.
                 # Insert it **before** the following string(s), whichever appears first.
                 for imgtype in supported_multiecho:
